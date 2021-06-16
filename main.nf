@@ -2,15 +2,15 @@
 
 nextflow.enable.dsl=2
 
-include { build_snpeff_db } from './modules/tb-genomic-epidemiology.nf'
-include { index_ref } from './modules/tb-genomic-epidemiology.nf'
-include { align } from './modules/tb-genomic-epidemiology.nf'
-include { call_variants } from './modules/tb-genomic-epidemiology.nf'
-include { vcf_extract_subs } from './modules/tb-genomic-epidemiology.nf'
-include { vcf_to_tab } from './modules/tb-genomic-epidemiology.nf'
-include { annotate_variants } from './modules/tb-genomic-epidemiology.nf'
-include { make_consensus } from './modules/tb-genomic-epidemiology.nf'
-include { make_consensus as make_consensus_subs } from './modules/tb-genomic-epidemiology.nf'
+include { build_snpeff_db } from './modules/call_variants.nf'
+include { index_ref } from './modules/call_variants.nf'
+include { align } from './modules/call_variants.nf'
+include { call_variants } from './modules/call_variants.nf'
+include { vcf_extract_subs } from './modules/call_variants.nf'
+include { vcf_to_tab } from './modules/call_variants.nf'
+include { annotate_variants } from './modules/call_variants.nf'
+include { make_consensus } from './modules/call_variants.nf'
+include { make_consensus as make_consensus_subs } from './modules/call_variants.nf'
 
 workflow {
 
