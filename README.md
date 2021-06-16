@@ -2,7 +2,7 @@
 
 This pipeline takes a directory containing paired-end illumina sequence data, plus a reference sequence,
 aligns the reads against the reference and calls variants. It is based directly off of the excellent
-[Snippy](https://github.com/tseemann/snippy) by Torsten Seemann (@tseemann).
+[Snippy](https://github.com/tseemann/snippy) by Torsten Seemann ([@tseemann](https://github.com/tseemann)).
 
 ## Usage
 
