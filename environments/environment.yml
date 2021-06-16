@@ -1,4 +1,4 @@
-name: tb-genomic-epidemiology
+name: call-variants
 channels:
   - conda-forge
   - bioconda
