@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+
+"""
+Adapted from snippy-vcf_extract_subs by Torsten Seemann (@tseemann):
+https://github.com/tseemann/snippy/blob/master/bin/snippy-vcf_extract_subs
+"""
+
+import argparse
+import json
+import re
+import sys
+
+
+def parse_info(info_str: str):
+    """
+    Parse an INFO string to a dictionary, leaving all values as strings.
+    :param info_string:
+    :returns:
+    """
+    info = {}
+    info_arr = info_str.split(";")
+    for i in info_arr:
+        [k, v] = i.split('=')
+        info[k] = v
+
+    return info
+
+
+def parse_format(format_str: str, sample: str):
+    """
+    Parse a format string + sample string to a dictionary (leaving all values as strings).
+    :param format_str:
+    :param sample:
+    :returns:
+    """
+    format_dict = {}
+    format_arr = format_str.split(":")
+    sample_arr = sample.split(":")
+    assertion_msg = "FORMAT: " + format_str + " and SAMPLE: " + sample + " have different number of elements." 
+    assert len(format_arr) == len(sample_arr), assertion_msg
+    for idx, val in enumerate(format_arr):
+        format_dict[format_arr[idx]] = sample_arr[idx]
+
+    return format_dict
+
+
+def serialize_format_and_sample(variant_format: dict, keep: list):
+    """
+    Serialize a variant format dictionary, returning both format and sample as strings.
+    :param variant_format:
+    :param keep:
+    :returns: 
+        - format (:py:class:`str`) - 
+        - sample (:py:class:`str`) - 
+    """
+    format_str = ""
+    sample_arr = []
+    sample_str = ""
+    if not keep:
+        keep = variant_format.keys()
+    format_str = ":".join(keep)
+    for k in keep:
+        sample_arr.append(variant_format[k])
+    sample_str = ":".join(sample_arr)
+
+    return format_str, sample_str
+
+
+def serialize_info(info: dict, keep: list):
+    """
+    Serialize an INFO dict to a string, retaining a specific set of keys from `keep`.
+    :param info:
+    :param keep:
+    :returns:
+    """
+    info_str = ""
+    info_arr = []
+    if not keep:
+        keep = info.keys()
+    for k in keep:
+        try:
+            v = info[k]
+            info_arr.append('='.join([k, v]))
+        except KeyError as e:
+            pass
+
+    info_str = ";".join(info_arr)
+
+    return info_str
+
+
+def main(args):
+    header = []
+    vcf = []
+
+    keep_format = args.format_tags.split(',')
+    keep_info = args.info_tags.split(',')
+
+    with open(args.input_vcf, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("#"):
+                if re.match("##INFO=<ID=(\w+)", line):
+                    id_tag = re.match("##INFO=<ID=(\w+)", line).group(1)
+                    if id_tag not in set(keep_info):
+                        continue
+                elif re.match("##FORMAT=<ID=(\w+)", line):
+                    format_tag = re.match("##FORMAT=<ID=(\w+)", line).group(1)
+                    if format_tag not in set(keep_format):
+                        continue
+                elif re.match("#CHROM", line):
+                    header.append('##INFO=<ID=OLDVAR,Number=R,Type=String,Description="Original REF,ALT before decomposition">')
+                header.append(line)
+            else:
+                [chrom, pos, variant_id, ref, alt, qual, variant_filter, info, variant_format, sample] = line.split('\t')
+                info_dict = parse_info(info)
+                format_dict = parse_format(variant_format, sample)
+                variant_type = info_dict['TYPE']
+                
+                if re.match("ins", variant_type) or re.match("del", variant_type):
+                    continue
+
+                if args.haploid:
+                    assertion_msg = "Missing GT tag from FORMAT: " + variant_format + " SAMPLE: " + sample
+                    assert "GT" in format_dict.keys(), assertion_msg
+                    genotype = format_dict['GT']
+                    if '0' in genotype and '1' in genotype:
+                        continue
+                    format_dict['GT'] = genotype[-1]
+
+                if args.filter:
+                    variant_filter = args.filter
+
+                variant_format, sample = serialize_format_and_sample(format_dict, keep_format)
+
+
+                if variant_type == 'complex' or variant_type == 'mnp':
+                    length = min(len(ref), len(alt))
+                    info_dict['OLDVAR'] = ','.join([variant_type, pos, ref, alt])
+                    info_dict['TYPE'] = "snp"
+                    info = serialize_info(info_dict, keep_info.append('OLDVAR'))
+                    for i in range(length):
+                        single_nucleotide_ref = ref[i]
+                        single_nucleotide_alt = alt[i]
+                        if single_nucleotide_ref != single_nucleotide_alt:
+                            vcf.append([chrom, str(int(pos)+i), variant_id, single_nucleotide_ref, single_nucleotide_alt, qual, variant_filter, info, variant_format, sample])
+                elif variant_type == 'snp':
+                    info = serialize_info(info_dict, keep_info)
+                    vcf.append([chrom, pos, variant_id, ref, alt, qual, variant_filter, info, variant_format, sample])
+                else:
+                    msg = "Skipping TYPE=" + variant_type + " @ " + chrom + ":" + pos + "\n" + info
+                    print(msg, file=sys.stderr)
+
+    vcf.sort(key=lambda x: (x[0], int(x[1])))
+
+    for line in header:
+        print(line)
+
+    for line in vcf:
+        print('\t'.join(line))
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser("vcf_extract_subs")
+    parser.add_argument('input_vcf', help="Input, vcf format")
+    parser.add_argument('--haploid', action='store_true', help="Convert diploid genotypes to haploid")
+    parser.add_argument('--filter', help="Override FILTER field in output vcf to this value")
+    parser.add_argument('--info-tags', default='TYPE,DP,RO,AO,AF', help="INFO tags to keep in output vcf. Default: \"TYPE,DP,RO,AO,AF\"")
+    parser.add_argument('--format-tags', default='GT,DP,RO,AO,QR,QA', help="FORMAT tags to keep in output vcf. Default: \"GT,DP,RO,AO,QR,QA\"")
+    args = parser.parse_args()
+    main(args)

@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+
+"""
+Adapted from snippy-vcf_to_tab by Torsten Seemann (@tseemann):
+https://github.com/tseemann/snippy/blob/master/bin/snippy-vcf_to_tab
+"""
+
+import argparse
+import json
+import re
+import sys
+
+from Bio import SeqIO
+from BCBio import GFF
+
+
+def parse_info(info_str):
+    """
+    Parse an INFO string to a dictionary, leaving all values as strings.
+    :param info_string:
+    :returns:
+    """
+    info = {}
+    info_arr = info_str.split(";")
+    for i in info_arr:
+        [k, v] = i.split('=')
+        info[k] = v
+
+    return info
+
+
+def main(args):
+    vcf_input_path = args.vcf
+    ref_input_path = args.ref
+    gff_input_path = args.gff
+
+    if args.auto:
+        vcf_input_path = 'snps.vcf'
+        ref_input_path = 'reference/ref.fa'
+        gff_input_path = 'reference/ref.gff'
+
+    seq = {}
+    print("Loading reference: " + ref_input_path, file=sys.stderr)
+    seq = SeqIO.to_dict(SeqIO.parse(ref_input_path, "fasta"))
+    nseq = len(seq)
+    print("Loaded " + str(nseq) + " sequences.", file=sys.stderr)
+
+    feature_idx = 0
+    features = {}
+    feature_lookup = {}
+
+    with open(gff_input_path) as f:
+        for record in GFF.parse(f):
+            if record.id not in feature_lookup:
+                feature_lookup[record.id] = {}
+            for f in record.features:
+                for sub_f in f.sub_features:
+                    if not re.match("^(source|gene|misc_feature)$", sub_f.type):
+                        features[feature_idx] = sub_f
+                        for pos in range(sub_f.location.start, sub_f.location.end + 1):
+                            feature_lookup[record.id][pos] = feature_idx
+                        feature_idx += 1
+
+    anno_arr = ["FTYPE", "STRAND", "NT_POS", "AA_POS", "EFFECT", "LOCUS_TAG", "GENE", "PRODUCT"]
+    count = 0
+    print('\t'.join(["CHROM", "POS", "TYPE", "REF", "ALT", "EVIDENCE"] + anno_arr))
+
+    print("Parsing variants: " + vcf_input_path, file=sys.stderr)
+
+    with open(vcf_input_path, 'r') as f:
+        for line in f:
+            if line.startswith('#'):
+                continue
+            line = line.strip()
+
+            [chrom, pos, _, ref_base, alt_base, _, _, variant_info, variant_format, sample] = line.split('\t')
+            info_dict = parse_info(variant_info)
+            anno_dict = {x: '' for x in anno_arr}
+
+            aff_featid = None
+
+            try:
+                aff_featid = feature_lookup[chrom][int(pos)]
+            except KeyError as e:
+                pass
+
+            if aff_featid != None:
+                f = features[aff_featid]
+                anno_dict['FTYPE'] = f.type
+                if f.strand > 0:
+                    anno_dict['STRAND'] = '+'
+                elif f.strand < 0:
+                    anno_dict['STRAND'] = '-'
+                else:
+                    anno_dict['STRAND'] = '.'
+
+                for tag in anno_arr:
+                    if tag.lower() in f.qualifiers:
+                        anno_dict[tag] = f.qualifiers[tag.lower()][0]
+
+                if 'ANN' in info_dict:
+                    eff = info_dict['ANN'].split('|')
+                    anno_dict['NT_POS'] = eff[11]
+                    anno_dict['AA_POS'] = eff[13]
+                    anno_dict['EFFECT'] = ' '.join([eff[1]] + eff[9:11])
+                else:
+                    anno_dict['EFFECT'] = "variant did not have ANN annotation"
+
+
+            RO = info_dict.get('RO', '0')
+            AO = info_dict.get('AO', '0')
+            evidence = ' '.join([':'.join([alt_base, AO]), ':'.join([ref_base, RO])])
+
+            anno_out = [anno_dict[x] for x in anno_arr]
+            print("\t".join([chrom, pos, info_dict['TYPE'], ref_base, alt_base, evidence] + anno_out))
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser("vcf_extract_subs")
+    parser.add_argument('--vcf', help="Input, vcf format")
+    parser.add_argument('--gff', help="Input, gff format")
+    parser.add_argument('--ref', help="Reference sequence, fasta format")
+    parser.add_argument('--auto', action='store_true', help="")
+    parser.add_argument('--info-tags', default='TYPE,DP,RO,AO,AF', help="INFO tags to keep in output vcf. Default: \"TYPE,DP,RO,AO,AF\"")
+    parser.add_argument('--format-tags', default='GT,DP,RO,AO,QR,QA', help="FORMAT tags to keep in output vcf. Default: \"GT,DP,RO,AO,QR,QA\"")
+    args = parser.parse_args()
+    main(args)
